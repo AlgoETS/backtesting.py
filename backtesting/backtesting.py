@@ -688,8 +688,7 @@ class Trade:
         assert type in ('sl', 'tp')
         assert price is None or 0 < price < np.inf
         attr = f'_{self.__class__.__qualname__}__{type}_order'
-        order: Order = getattr(self, attr)
-        if order:
+        if order := getattr(self, attr):
             order.cancel()
         if price:
             kwargs = {'stop': price} if type == 'sl' else {'limit': price}
@@ -748,11 +747,10 @@ class _Broker:
                 raise ValueError(
                     "Long orders require: "
                     f"SL ({sl}) < LIMIT ({limit or stop or adjusted_price}) < TP ({tp})")
-        else:
-            if not (tp or -np.inf) < (limit or stop or adjusted_price) < (sl or np.inf):
-                raise ValueError(
-                    "Short orders require: "
-                    f"TP ({tp}) < LIMIT ({limit or stop or adjusted_price}) < SL ({sl})")
+        elif not (tp or -np.inf) < (limit or stop or adjusted_price) < (sl or np.inf):
+            raise ValueError(
+                "Short orders require: "
+                f"TP ({tp}) < LIMIT ({limit or stop or adjusted_price}) < SL ({sl})")
 
         order = Order(self, size, limit, stop, sl, tp, trade, tag)
         # Put the new order in the order queue,
@@ -772,7 +770,6 @@ class _Broker:
             self.orders.append(order)
 
         return order
-
     @property
     def last_price(self) -> float:
         """ Price at the last (current) close. """
@@ -1242,6 +1239,24 @@ class Backtest:
 
         return self._results
 
+    def run_pretty(self, **kwargs) -> None:
+        """
+        Run the backtest and print results to console.
+        """
+        run = self.run(**kwargs)
+        run_pretty = pd.DataFrame(pd.DataFrame(run).T)
+        run_pretty.insert(0, 'Strategy', run_pretty.pop('_strategy'))
+        run_pretty['Sizes'] = run_pretty._trades['Size'].to_string().replace('/n',',')
+        run_pretty['EntryTimes'] = run_pretty._trades['EntryTime'].to_string().replace('/n',',')
+        run_pretty['ExitTimes'] =  run_pretty._trades['ExitTime'].to_string().replace('/n',',')
+        run_pretty['Durations'] = pd.DataFrame([str(run_pretty._trades['ExitTime'][i] - run_pretty._trades['EntryTime'][i]) for i in range(len(run_pretty._trades['ExitTime']))]).to_string().replace('/n',',')
+        run_pretty['EntryPrices'] = run_pretty._trades['EntryPrice'].to_string().replace('/n',',')
+        run_pretty['ExitPrices'] = run_pretty._trades['ExitPrice'].to_string().replace('/n',',')
+        run_pretty['EntryBars'] = run_pretty._trades['EntryBar'].to_string().replace('/n',',')
+        run_pretty['ExitBars'] = run_pretty._trades['ExitBar'].to_string().replace('/n',',')
+        run_pretty['PnLs'] = run_pretty._trades['PnL'].to_string().replace('/n',',')
+        run_pretty['ReturnPcTs'] = run_pretty._trades['ReturnPct'].to_string().replace('/n',',')
+
     def optimize(self, *,
                  maximize: Union[str, Callable[[pd.Series], float]] = 'SQN',
                  method: str = 'grid',
@@ -1367,9 +1382,11 @@ class Backtest:
         def _grid_size():
             size = int(np.prod([len(_tuple(v)) for v in kwargs.values()]))
             if size < 10_000 and have_constraint:
-                size = sum(1 for p in product(*(zip(repeat(k), _tuple(v))
-                                                for k, v in kwargs.items()))
-                           if constraint(AttrDict(p)))
+                size = sum(output
+                    for p in product(
+                        *(zip(repeat(k), _tuple(v)) for k, v in kwargs.items())
+                    )
+                )
             return size
 
         def _optimize_grid() -> Union[pd.Series, Tuple[pd.Series, pd.Series]]:
@@ -1441,9 +1458,7 @@ class Backtest:
             else:
                 stats = self.run(**dict(zip(heatmap.index.names, best_params)))
 
-            if return_heatmap:
-                return stats, heatmap
-            return stats
+            return (stats, heatmap) if return_heatmap else stats
 
         def _optimize_skopt() -> Union[pd.Series,
                                        Tuple[pd.Series, pd.Series],
@@ -1496,9 +1511,7 @@ class Backtest:
                     return INVALID
                 res = memoized_run(tuple(params.items()))
                 value = -maximize(res)
-                if np.isnan(value):
-                    return INVALID
-                return value
+                return INVALID if np.isnan(value) else value
 
             with warnings.catch_warnings():
                 warnings.filterwarnings(

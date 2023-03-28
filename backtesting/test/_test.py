@@ -1,11 +1,12 @@
 import inspect
 import os
+import pathlib
 import sys
 import time
 import unittest
 import warnings
 from concurrent.futures.process import ProcessPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from glob import glob
 from runpy import run_path
 from tempfile import NamedTemporaryFile, gettempdir
@@ -78,6 +79,10 @@ class TestBacktest(TestCase):
         bt = Backtest(EURUSD, SmaCross)
         bt.run()
 
+    def test_pretty(self):
+        bt = Backtest(EURUSD, SmaCross)
+        bt.run_pretty()
+
     def test_run_invalid_param(self):
         bt = Backtest(GOOG, SmaCross)
         self.assertRaises(AttributeError, bt.run, foo=3)
@@ -124,6 +129,9 @@ class TestBacktest(TestCase):
             Backtest(GOOG.iloc[:0], SmaCross).run()
 
     def test_assertions(self):
+
+
+
         class Assertive(Strategy):
             def init(self):
                 self.sma = self.I(SMA, self.data.Close, 10)
@@ -169,22 +177,7 @@ class TestBacktest(TestCase):
                 self.position.is_long
 
                 if crossover(self.sma, self.data.Close):
-                    self.orders.cancel()  # cancels only non-contingent
-                    price = self.data.Close[-1]
-                    sl, tp = 1.05 * price, .9 * price
-
-                    n_orders = len(self.orders)
-                    self.sell(size=.21, limit=price, stop=price, sl=sl, tp=tp)
-                    assert len(self.orders) == n_orders + 1
-
-                    order = self.orders[-1]
-                    assert order.limit == price
-                    assert order.stop == price
-                    assert order.size == -.21
-                    assert order.sl == sl
-                    assert order.tp == tp
-                    assert not order.is_contingent
-
+                    self.is_contingent()
                 elif self.position:
                     assert not self.position.is_long
                     assert self.position.is_short
@@ -214,6 +207,24 @@ class TestBacktest(TestCase):
                         self.position.close(.5)
                         self.position.close()
                         self.position.close()
+
+            def is_contingent(self):
+                self.orders.cancel()  # cancels only non-contingent
+                price = self.data.Close[-1]
+                sl, tp = 1.05 * price, .9 * price
+
+                n_orders = len(self.orders)
+                self.sell(size=.21, limit=price, stop=price, sl=sl, tp=tp)
+                assert len(self.orders) == n_orders + 1
+
+                order = self.orders[-1]
+                assert order.limit == price
+                assert order.stop == price
+                assert order.size == -.21
+                assert order.sl == sl
+                assert order.tp == tp
+                assert not order.is_contingent
+
 
         bt = Backtest(GOOG, Assertive)
         with self.assertWarns(UserWarning):
@@ -681,12 +692,9 @@ class TestPlot(TestCase):
         df = GOOG.iloc[:100].reset_index(drop=True)
 
         # Warm-up. CPython bug bpo-29620.
-        try:
+        with suppress(RuntimeError):
             with self.assertWarns(UserWarning):
                 Backtest(df, SmaCross)
-        except RuntimeError:
-            pass
-
         with self.assertWarns(UserWarning):
             bt = Backtest(df, SmaCross)
         bt.run()
@@ -955,9 +963,9 @@ class TestDocs(TestCase):
             self.assertIn(key, Backtest.run.__doc__)
 
     def test_readme_contains_stats_keys(self):
-        with open(os.path.join(os.path.dirname(__file__),
-                               '..', '..', 'README.md')) as f:
-            readme = f.read()
+        readme = pathlib.Path(
+            os.path.join(os.path.dirname(__file__), '..', '..', 'README.md')
+        ).read_text()
         stats = Backtest(SHORT_DATA, SmaCross).run()
         for key in stats.index:
             self.assertIn(key, readme)
